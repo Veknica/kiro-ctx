@@ -1,109 +1,130 @@
-# Using agora-kiro with Kiro
+# agora-kiro
 
-agora-kiro gives Kiro persistent memory across sessions — goals, learnings, file history, and search logs survive restarts and context resets.
+Persistent memory for [Kiro](https://kiro.dev) AI coding sessions. A Kiro-exclusive fork of [agora-code](https://github.com/thebnbrkr/agora-code).
+
+Goals, learnings, file symbols, and search history survive context resets and session restarts — stored locally in a SQLite database, injected back into context automatically.
+
+---
+
+## How it works
+
+```
+Session start  → inject hook fires → last checkpoint + learnings in context (free)
+You work       → summarize_file before reads, index_file after edits (small credit cost)
+Agent stops    → store_learning (one sentence) + checkpoint saved (free)
+Next session   → inject fires again — you're back in context in ~200 tokens
+```
+
+All memory lives in `~/.agora-kiro/memory.db`. Nothing leaves your machine.
+
+---
 
 ## Setup
 
-Run this from your project root (or from this repo to test it here):
-
-```bash
-sh /path/to/kiro-ctx/kiro-setup.sh
-```
-
-That's it. The script:
-1. Installs `agora-kiro` if not already present
-2. Resolves the full binary path and writes it into `.kiro/settings/mcp.json`
-3. Copies all 9 hooks into `.kiro/hooks/` with the correct path baked in
-4. Copies the steering doc into `.kiro/steering/`
-5. Runs `agora-kiro status` to confirm everything works
-
-Then **restart Kiro** to load the hooks and MCP server.
-
-### Manual setup (if you prefer)
-
-<details>
-<summary>Expand for manual steps</summary>
-
-**1. Install agora-kiro**
+**1. Install**
 ```bash
 pip install agora-kiro
 ```
 
-**2. Get the full binary path** (Kiro's subprocess often has a thin PATH)
+**2. Get the full binary path** — Kiro's subprocess has a thin PATH so you need the full path
 ```bash
 which agora-kiro
 ```
 
-**3. Copy `.kiro/` into your project**
-
-Copy `.kiro/settings/mcp.json`, `.kiro/steering/agora-kiro.md`, and `.kiro/hooks/` from this repo. Replace `"command": "agora-kiro"` in `mcp.json` with the full path from step 2. Do the same for the `command` field in any shell hook files.
-
-</details>
-
-### Hook inventory
-
-**9 hooks** ship in `.kiro/hooks/` using Kiro's stable built-in category matchers (`read`, `write`) instead of fragile concrete tool names. For a full mapping to Kiro trigger types and improvement ideas, see **`docs/KIRO_HOOKS.md`**. For design notes and backlog, see **`docs/KIRO_AGORA_INSIGHTS_AND_PLAN.md`**.
-
-| Hook | Trigger | Action |
-|---|---|---|
-| `agora-session-inject` | Every prompt | Injects last session context (shell, 0 credits) |
-| `agora-auto-checkpoint` | Agent stop | Saves progress checkpoint (shell, 0 credits) |
-| `agora-inject-before-task` | Spec task start | Loads context before each task (shell, 0 credits) |
-| `checkpoint-after-task` | Spec task end | Saves checkpoint after task (shell, 0 credits) |
-| `agora-summarize-before-read` | Before any `read` tool | Gets AST outline, reads only relevant section |
-| `agora-index-after-write` | After any `write` tool | Indexes updated symbols into memory DB |
-| `agora-log-grep-results` | After `grepSearch` | Logs search query + indexes matched files |
-| `agora-index-on-save` | File saved | Indexes symbols on manual save |
-| `agora-summarize-interaction` | Agent stop | Stores one-sentence learning (Ask Kiro) |
-
-Restart Kiro after adding hooks for them to take effect.
-
-## What you get
-
-Once set up, Kiro automatically:
-
-- **Remembers what you were working on** — session context is injected before every prompt
-- **Saves progress** — checkpoints after every agent turn and spec task
-- **Stores discoveries** — non-obvious findings are saved and recalled in future sessions
-- **Reads large files efficiently** — AST summaries before reads, then targeted line ranges (90%+ token reduction)
-- **Tracks your searches** — grep queries and matched files are logged persistently
-- **Indexes edited files** — symbols become searchable across sessions after every edit
-
-## Available MCP tools
-
-| Tool | What it does |
-|---|---|
-| `get_session_context` | Load last session — goal, hypothesis, next steps, files changed |
-| `save_checkpoint` | Save current progress mid-session |
-| `complete_session` | Archive session to long-term memory when done |
-| `store_learning` | Save a non-obvious finding for future sessions |
-| `recall_learnings` | Search past findings before starting a task |
-| `store_team_learning` | Save a finding shared across the whole team/project |
-| `recall_team` | Search team-wide knowledge |
-| `summarize_file` | Get AST outline of a file with function names and line numbers |
-| `read_file_range` | Read a specific line range from a file |
-| `index_file` | Index a file's symbols into the memory DB |
-| `get_file_symbols` | Get all indexed symbols for a file |
-| `search_symbols` | Search symbols across all indexed files |
-| `recall_file_history` | See all past changes to a file across sessions |
-| `log_search` | Log a search query and its matched files |
-| `get_memory_stats` | Check DB stats — session count, learning count, symbol count |
-| `list_sessions` | List all past sessions |
-
-## Verifying it works
-
-In Kiro's terminal:
-
-```bash
-agora-kiro status          # DB path and row counts
-agora-kiro list-learnings  # everything stored so far
-agora-kiro list-sessions   # all past sessions
-agora-kiro inject          # manually trigger session inject, see output
-agora-kiro recall "your query"  # test semantic search
+**3. Add MCP server** — paste into `.kiro/settings/mcp.json` in your project (replace the path):
+```json
+{
+  "mcpServers": {
+    "agora-kiro": {
+      "command": "/paste/output/of/which/agora-kiro/here",
+      "args": ["memory-server"],
+      "autoApprove": [
+        "get_session_context", "save_checkpoint", "store_learning",
+        "recall_learnings", "complete_session", "get_memory_stats",
+        "list_sessions", "recall_file_history", "get_file_symbols",
+        "search_symbols", "summarize_file", "read_file_range",
+        "index_file", "log_search", "store_team_learning", "recall_team"
+      ]
+    }
+  }
+}
 ```
 
-## How it works
+**4. Add hooks** — in Kiro's Hook UI, create these two free hooks:
 
-All memory is stored in a local SQLite database at `~/.agora-kiro/memory.db`. Nothing leaves your machine. The MCP server (`agora-kiro memory-server`) exposes this database to Kiro via the Model Context Protocol.
+| Title | Event | Action | Command |
+|---|---|---|---|
+| `agora-session-inject` | Prompt Submit | Run Command | `agora-kiro inject --quiet` |
+| `agora-auto-checkpoint` | Agent Stop | Run Command | `agora-kiro checkpoint --quiet` |
 
-The shell hooks (`agora-session-inject`, `agora-auto-checkpoint`, etc.) run `agora-kiro inject` and `agora-kiro checkpoint` as zero-credit shell commands. The `askAgent` hooks (summarize, index, log) use MCP tool calls and consume a small amount of credits.
+Optional hooks (cost small credits, save tokens on large files):
+
+| Title | Event | Action | Command |
+|---|---|---|---|
+| `agora-summarize-before-read` | Pre Tool Use (`read`) | Ask Kiro | Call `summarize_file` then `read_file_range` instead of loading the full file |
+| `agora-index-after-write` | Post Tool Use (`write`) | Ask Kiro | Call `index_file` on the edited file |
+| `agora-summarize-interaction` | Agent Stop | Ask Kiro | Call `store_learning` with one sentence summary then stop |
+
+**5. Add steering** — in Kiro's Steering UI, create a new doc with inclusion set to **Always** and paste the contents of `.kiro/steering/agora-memory.md`.
+
+**6. Restart Kiro** — hooks and MCP load on restart.
+
+**7. Verify**
+```bash
+agora-kiro status          # DB path + row counts
+agora-kiro inject          # see what gets injected into context
+agora-kiro list-learnings  # everything stored so far
+agora-kiro recall "query"  # test search
+```
+
+---
+
+## Credit cost
+
+| Hook | Cost |
+|---|---|
+| Session inject (every prompt) | Free — shell command |
+| Checkpoint (every agent stop) | Free — shell command |
+| Summarize before read | Small — one MCP tool call per file |
+| Index after write | Small — one MCP tool call per file |
+| Store learning on agent stop | Small — one MCP tool call per turn |
+
+The main token saving is from `summarize_file` → `read_file_range` instead of loading full files. A 500-line file costs ~50 tokens as a summary vs ~2000 tokens loaded in full.
+
+---
+
+## MCP tools
+
+| Tool | When to use |
+|---|---|
+| `get_session_context` | Need full session detail (goal, hypothesis, files changed) |
+| `save_checkpoint` | Completed a meaningful step |
+| `store_learning` | Found something non-obvious |
+| `recall_learnings` | Starting a task — check if solved before |
+| `complete_session` | Done for the day |
+| `summarize_file` | About to read a large file — get AST outline first |
+| `read_file_range` | Read specific lines after summarizing |
+| `index_file` | Just edited a file — make symbols searchable |
+| `search_symbols` | Find a function/class across the codebase |
+| `get_file_symbols` | List all symbols in a specific file |
+| `recall_file_history` | See what changed in a file across past sessions |
+| `log_search` | Log a search query and matched files |
+| `get_memory_stats` | Check DB stats |
+| `list_sessions` | Browse past sessions |
+| `store_team_learning` | Save a finding for the whole team |
+| `recall_team` | Search team-wide knowledge |
+
+---
+
+## CLI
+
+```bash
+agora-kiro status           # DB path and counts
+agora-kiro memory           # dump sessions, learnings, symbols
+agora-kiro inject           # manually trigger session inject
+agora-kiro recall "query"   # search past learnings
+agora-kiro list-sessions    # all past sessions
+agora-kiro list-learnings   # everything stored so far
+agora-kiro checkpoint --goal "What you're working on"
+agora-kiro learn "finding"
+```
