@@ -126,7 +126,7 @@ def memory(limit, limit_arg, verbose):
     stats = store.get_stats()
     _echo(f"DB path: {stats['db_path']}")
     _echo(f"Counts:  {stats['sessions']} sessions, {stats['learnings']} learnings, "
-          f"{stats['api_calls']} API calls, {stats.get('file_snapshots', 0)} file snapshots (AST), "
+          f"{stats.get('file_snapshots', 0)} file snapshots (AST), "
           f"{stats.get('symbol_notes', 0)} symbol notes  [vector: {'on' if stats['vector_search'] else 'off'}]")
     _echo("")
 
