@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "agora-kiro": {
-      "command": "agora-kiro",
+      "command": "/paste/output/of/which/agora-kiro/here",
       "args": ["memory-server"],
       "autoApprove": [
         "get_session_context",
