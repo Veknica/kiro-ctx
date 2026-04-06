@@ -23,7 +23,7 @@ All memory lives in `~/.agora-kiro/memory.db`. Nothing leaves your machine.
 
 **1. Install**
 ```bash
-pip install agora-kiro
+pip install git+https://github.com/Veknica/kiro-ctx
 ```
 
 **2. Get the full binary path** — Kiro's subprocess has a thin PATH so you need the full path
