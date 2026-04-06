@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "name": "agora: index after write",
+  "description": "Index file symbols into memory DB after any write or edit",
+  "when": {
+    "type": "postToolUse",
+    "toolTypes": [
+      "write"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Call index_file from agora-kiro for the file that was just written or edited so its updated symbols are searchable in future sessions."
+  }
+}

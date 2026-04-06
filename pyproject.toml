@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agora-kiro"
+version = "0.1.0"
+description = "Persistent memory for Kiro AI coding sessions — session context, learnings, symbol indexing, and token-efficient file reads via MCP"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Agora" }]
+keywords = ["kiro", "ai", "agent", "mcp", "memory", "session", "context"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+]
+
+# Core: click for CLI, tree-sitter for structural summarization, tiktoken for
+# accurate token counting. Both have graceful fallbacks but are always installed.
+dependencies = [
+    "click>=8.0",
+    "tree-sitter-language-pack>=0.13",   # AST-based file summarizer (170+ langs)
+    "tiktoken>=0.7",                      # Accurate BPE token counting
+]
+
+[project.optional-dependencies]
+# Embedding providers for semantic recall (falls back to FTS5 keyword search)
+openai  = ["openai>=1.0"]
+gemini  = ["google-generativeai>=0.8"]
+
+# Vector similarity search in SQLite
+vec     = ["sqlite-vec>=0.1", "pysqlite3-binary>=0.5; sys_platform != 'linux'"]
+
+# Local embeddings — fully offline, no API key needed (~130MB)
+local   = ["fastembed>=0.3"]
+
+# Dev / test
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+# Everything
+all = [
+    "agora-kiro[openai,gemini,vec,local,dev]",
+]
+
+[project.scripts]
+agora-kiro = "agora_kiro.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agora_kiro"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
