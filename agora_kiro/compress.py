@@ -1,25 +1,14 @@
 """
-compress.py — Route catalog and session state compression for agora-kiro.
+compress.py — Session state compression for agora-kiro.
 
-Compresses discovered API routes and session state into compact
-representations before injecting into coding agents (Claude, Cursor, Gemini).
-No LLM required — pure structural extraction.
-
-Route compression levels:
-  index   — route names only (~50 tokens per 10 routes)
-  summary — names + one-line descriptions (default, ~200 tokens)
-  detail  — names + descriptions + all params (~500 tokens)
-  full    — uncompressed JSON
+Compresses session state into compact representations before injecting
+into Kiro's context window. No LLM required — pure structural extraction.
 
 Session compression levels:
-  index   ~50 t   goal + endpoint list
-  summary ~200 t  + hypothesis + top discoveries + next steps  (DEFAULT)
-  detail  ~500 t  + all attempts, decisions, blockers
+  index   ~50 t   goal only
+  summary ~200 t  + hypothesis + discoveries + next steps  (DEFAULT)
+  detail  ~500 t  + files changed, decisions, full endpoint status
   full    raw JSON
-
-Token budget auto-selection:
-  auto_level(routes) picks the highest-detail level under 2000 tokens.
-  auto_compress_session(session) does the same for session state.
 """
 
 from __future__ import annotations
@@ -27,220 +16,19 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from agora_kiro.models import Route, RouteCatalog
 from agora_kiro.summarizer import estimate_tokens
 
 LEVELS = ["index", "summary", "detail", "full"]
 
-DEFAULT_TOKEN_BUDGET = 2000
-
-
-# --------------------------------------------------------------------------- #
-#  Route catalog compression                                                   #
-# --------------------------------------------------------------------------- #
-
-def summarize_routes(
-    routes: List[Route],
-    level: str = "summary",
-    source: Optional[str] = None,
-) -> str:
-    """
-    Compress a list of routes to the given level.
-
-    Args:
-        routes: List of Route objects from the scanner
-        level:  'index' | 'summary' | 'detail' | 'full'
-        source: Optional source label (e.g. 'openapi', 'ast', 'llm')
-
-    Returns:
-        Compressed string representation of the route catalog.
-    """
-    if level not in LEVELS:
-        raise ValueError(f"level must be one of {LEVELS}, got {level!r}")
-
-    if level == "full":
-        return _full(routes, source)
-    elif level == "index":
-        return _index(routes, source)
-    elif level == "summary":
-        return _summary(routes, source)
-    elif level == "detail":
-        return _detail(routes, source)
-
-    return _summary(routes, source)
-
-
-def auto_level(
-    routes: List[Route],
-    token_budget: int = DEFAULT_TOKEN_BUDGET,
-    source: Optional[str] = None,
-) -> tuple[str, str]:
-    """
-    Automatically pick the highest-detail level that fits within token_budget.
-
-    Returns:
-        (level, compressed_text) — the level chosen and the resulting text.
-    """
-    for level in ["detail", "summary", "index"]:
-        text = summarize_routes(routes, level=level, source=source)
-        if estimate_tokens(text) <= token_budget:
-            return level, text
-
-    text = summarize_routes(routes, level="index", source=source)
-    return "index", text
-
-
-# --------------------------------------------------------------------------- #
-#  Level implementations                                                       #
-# --------------------------------------------------------------------------- #
-
-def _header(count: int, source: Optional[str]) -> str:
-    src_str = f" [{source}]" if source else ""
-    return f"## API Routes{src_str} ({count} endpoints)\n"
-
-
-def _index(routes: List[Route], source: Optional[str]) -> str:
-    """Level 0: just METHOD /path — one line each."""
-    lines = [_header(len(routes), source)]
-    for r in routes:
-        lines.append(f"- {r.method} {r.path}")
-    return "\n".join(lines)
-
-
-def _summary(routes: List[Route], source: Optional[str]) -> str:
-    """Level 1: METHOD /path — description (one line each)."""
-    lines = [_header(len(routes), source)]
-    for r in routes:
-        desc = _short_desc(r)
-        if desc:
-            lines.append(f"- {r.method} {r.path} — {desc}")
-        else:
-            lines.append(f"- {r.method} {r.path}")
-    return "\n".join(lines)
-
-
-def _detail(routes: List[Route], source: Optional[str]) -> str:
-    """Level 2: METHOD /path + description + params."""
-    lines = [_header(len(routes), source)]
-    for r in routes:
-        desc = _short_desc(r)
-        header = f"- {r.method} {r.path}"
-        if desc:
-            header += f" — {desc}"
-        lines.append(header)
-        if r.params:
-            param_parts = []
-            for p in r.params:
-                required = " (required)" if p.required else ""
-                param_parts.append(f"{p.name}: {p.type}{required}")
-            lines.append(f"  params: {', '.join(param_parts)}")
-    return "\n".join(lines)
-
-
-def _full(routes: List[Route], source: Optional[str]) -> str:
-    """Level 3: raw JSON dump — uncompressed."""
-    data = {
-        "source": source,
-        "count": len(routes),
-        "routes": [_route_to_dict(r) for r in routes],
-    }
-    return json.dumps(data, indent=2)
-
-
-# --------------------------------------------------------------------------- #
-#  Catalog-level compression                                                   #
-# --------------------------------------------------------------------------- #
-
-def compress_catalog(
-    catalog: RouteCatalog,
-    level: str = "summary",
-) -> str:
-    """Compress a full RouteCatalog to the given level."""
-    return summarize_routes(catalog.routes, level=level, source=catalog.source)
-
-
-def compress_catalog_auto(
-    catalog: RouteCatalog,
-    token_budget: int = DEFAULT_TOKEN_BUDGET,
-) -> tuple[str, str]:
-    """Auto-pick compression level for a RouteCatalog."""
-    return auto_level(catalog.routes, token_budget=token_budget, source=catalog.source)
-
-
-# --------------------------------------------------------------------------- #
-#  Quality measurement                                                         #
-# --------------------------------------------------------------------------- #
-
-def measure_compression(routes: List[Route], level: str) -> dict:
-    """
-    Measure compression ratio for a given level vs full JSON.
-
-    Returns:
-        {
-            "level": level,
-            "original_tokens": int,
-            "compressed_tokens": int,
-            "reduction_pct": float,
-        }
-    """
-    full_text = _full(routes, source=None)
-    compressed_text = summarize_routes(routes, level=level)
-
-    original = estimate_tokens(full_text)
-    compressed = estimate_tokens(compressed_text)
-    reduction = round((1 - compressed / original) * 100, 1) if original > 0 else 0.0
-
-    return {
-        "level": level,
-        "original_tokens": original,
-        "compressed_tokens": compressed,
-        "reduction_pct": reduction,
-    }
-
-
-# --------------------------------------------------------------------------- #
-#  Route helpers                                                               #
-# --------------------------------------------------------------------------- #
-
-def _short_desc(route: Route) -> str:
-    desc = getattr(route, "description", None) or ""
-    if not desc:
-        return ""
-    first_line = desc.split("\n")[0].strip()
-    if len(first_line) > 80:
-        return first_line[:77] + "..."
-    return first_line
-
-
-def _route_to_dict(route: Route) -> Dict[str, Any]:
-    return {
-        "method": route.method,
-        "path": route.path,
-        "description": getattr(route, "description", None),
-        "params": [
-            {
-                "name": p.name,
-                "type": p.type,
-                "location": p.location,
-                "required": p.required,
-                "description": getattr(p, "description", None),
-            }
-            for p in (route.params or [])
-        ],
-    }
+SESSION_DEFAULT_BUDGET = 2000
 
 
 # --------------------------------------------------------------------------- #
 #  Session state compression                                                   #
 # --------------------------------------------------------------------------- #
 
-SESSION_DEFAULT_BUDGET = 2000
-
-
 def compress_session(session: dict, level: str = "summary") -> str:
-    """
-    Compress a session dict for injection into the AI assistant's context.
-    """
+    """Compress a session dict for injection into Kiro's context."""
     if level not in LEVELS:
         raise ValueError(f"level must be one of {LEVELS}, got {level!r}")
 
@@ -293,10 +81,7 @@ def session_restored_banner(session: dict, token_budget: int = SESSION_DEFAULT_B
 
 def _session_index(session: dict) -> str:
     goal = session.get("goal") or "No goal set"
-    endpoints = session.get("endpoints_tested", [])
-    ep_str = ", ".join(f"{e['method']} {e['path']}" for e in endpoints[:8])
-    suffix = f" +{len(endpoints)-8} more" if len(endpoints) > 8 else ""
-    return f"Goal: {goal}\nEndpoints: {ep_str or '(none)'}{suffix}"
+    return f"Goal: {goal}"
 
 
 def _session_summary(session: dict) -> str:
@@ -325,14 +110,6 @@ def _session_summary(session: dict) -> str:
         lines.append("NEXT STEPS:")
         for step in next_steps[:3]:
             lines.append(f"  → {step}")
-
-    endpoints = session.get("endpoints_tested", [])
-    if endpoints:
-        lines.append("ENDPOINTS:")
-        for ep in endpoints[:5]:
-            a = ep.get("attempts", 0)
-            s = ep.get("successes", 0)
-            lines.append(f"  • {ep['method']} {ep['path']}  ({s}/{a} ok)")
 
     blockers = session.get("blockers", [])
     for b in blockers[:2]:
@@ -363,23 +140,6 @@ def _session_detail(session: dict) -> str:
         lines.append("\nDECISIONS MADE:")
         for d in decisions:
             lines.append(f"  – {d}")
-
-    endpoints = session.get("endpoints_tested", [])
-    if endpoints:
-        lines.append("\nFULL ENDPOINT STATUS:")
-        for ep in endpoints:
-            a = ep.get("attempts", 0)
-            s = ep.get("successes", 0)
-            f = ep.get("failures", 0)
-            lines.append(f"  {ep['method']} {ep['path']}  {s}/{a} ok, {f} fail")
-            if ep.get("last_error"):
-                lines.append(f"    last error: {ep['last_error']}")
-            if ep.get("working_parameters"):
-                lines.append(f"    working params: {ep['working_parameters']}")
-            fails = ep.get("failing_parameters", [])
-            if fails:
-                extra = f" +{len(fails)-1} more" if len(fails) > 1 else ""
-                lines.append(f"    failing params: {fails[0]}{extra}")
 
     return "\n".join(lines)
 

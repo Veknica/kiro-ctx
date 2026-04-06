@@ -91,7 +91,7 @@ def status(project):
     else:
         stats = store.get_stats()
         _echo(f"\nmemory (global): {stats['sessions']} sessions  {stats['learnings']} learnings  "
-              f"{stats['api_calls']} API calls  [DB: {stats['db_path']}]"
+              f"[DB: {stats['db_path']}]"
               f"  [vector: {'on' if stats['vector_search'] else 'off'}]")
 
 
@@ -765,55 +765,8 @@ def _track_diff_one(file_path: str, committed: bool, note: Optional[str] = None)
 
 
 def _llm_change_note(diff: str, file_path: str, symbols: str = "") -> Optional[str]:
-    """
-    Generate a 1-2 sentence change note using the configured LLM provider.
-    Uses LLM_PROVIDER / ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY (auto-detect).
-    Returns None if no provider available — caller falls back to regex.
-    """
-    try:
-        from agora_kiro.extractors.llm import _detect_provider
-        provider, model = _detect_provider()
-        if not provider:
-            return None
-
-        symbol_hint = f"\nKnown symbols in this file: {symbols}" if symbols else ""
-        prompt = (
-            f"You are summarizing a code change for a developer memory system.\n"
-            f"File: {file_path}{symbol_hint}\n\n"
-            f"Diff:\n{diff[:3000]}\n\n"
-            f"Write exactly 1-2 sentences: what changed, why (if inferrable), "
-            f"and what it connects to (callers/callees if visible). "
-            f"Format: 'changed <symbol> to <what> [— connects to <other>]'. "
-            f"Be specific. No preamble."
-        )
-
-        import asyncio
-        if provider in ("claude", "anthropic"):
-            import anthropic
-            client = anthropic.Anthropic()
-            resp = client.messages.create(
-                model=model, max_tokens=120,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            note = resp.content[0].text.strip() if resp.content else ""
-        elif provider == "openai":
-            from openai import OpenAI
-            client = OpenAI()
-            resp = client.chat.completions.create(
-                model=model, max_tokens=120, temperature=0.2,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            note = resp.choices[0].message.content.strip()
-        elif provider == "gemini":
-            import google.generativeai as genai
-            m = genai.GenerativeModel(model)
-            resp = m.generate_content(prompt)
-            note = resp.text.strip() if resp.text else ""
-        else:
-            return None
-        return note if note else None
-    except Exception:
-        return None
+    """Placeholder — LLM provider auto-detect removed. Caller falls back to regex."""
+    return None
 
 
 def _summarize_diff(diff: str, file_path: str) -> str:
@@ -1510,3 +1463,9 @@ def memory_server():
     asyncio.run(serve_memory())
 
 
+# --------------------------------------------------------------------------- #
+#  Helpers                                                                     #
+# --------------------------------------------------------------------------- #
+
+def _echo(msg: str) -> None:
+    click.echo(msg)
